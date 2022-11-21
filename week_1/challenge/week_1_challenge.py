@@ -15,7 +15,7 @@ from dagster import (
     String,
     job,
     op,
-    usable_as_dagster_type,
+    usable_as_dagster_type, Int
 )
 from pydantic import BaseModel
 
@@ -30,7 +30,7 @@ class Stock(BaseModel):
     low: float
 
     @classmethod
-    def from_list(cls, input_list: List[List]):
+    def from_list(cls, input_list: List[str]):
         """Do not worry about this class method for now"""
         return cls(
             date=datetime.strptime(input_list[0], "%Y/%m/%d"),
@@ -55,18 +55,25 @@ def csv_helper(file_name: str) -> Iterator[Stock]:
             yield Stock.from_list(row)
 
 
-@op
-def get_s3_data():
-    pass
+@op(config_schema={"s3_key": String}, out={"stocks": Out(is_required=False), "empty_stocks": Out(is_required=False)})
+def get_s3_data(context) -> List[Stock]:
+    s3_key = context.op_config["s3_key"]
+    stock_list = list(csv_helper(s3_key))
+    if len(stock_list) == 0:
+        return Output(stock_list, "empty_stocks")
+    else:
+        return Output(stock_list, "stocks")
+
+
+@op(config_schema={"nlargest": Int}, out=DynamicOut())
+def process_data(context, stocks: List[Stock]) -> List[Aggregation]:
+    nlargest_int = context.op_config["nlargest"]
+    for stock in nlargest(nlargest_int, stocks):
+        yield DynamicOutput(Aggregation(date=stock.date, high=stock.high), mapping_key=str(stock.date))
 
 
 @op
-def process_data():
-    pass
-
-
-@op
-def put_redis_data():
+def put_redis_data(context, aggregation: Aggregation):
     pass
 
 
@@ -80,4 +87,7 @@ def empty_stock_notify(context, empty_stocks) -> Nothing:
 
 @job
 def week_1_challenge():
-    pass
+    stocks, empty_stocks = get_s3_data()
+    empty_stock_notify(empty_stocks)
+    data_processed = stocks.map(process_data)
+    put_redis_data(data_processed.collect())

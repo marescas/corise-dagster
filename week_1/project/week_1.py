@@ -16,7 +16,7 @@ class Stock(BaseModel):
     low: float
 
     @classmethod
-    def from_list(cls, input_list: List[List]):
+    def from_list(cls, input_list: List[str]):
         """Do not worry about this class method for now"""
         return cls(
             date=datetime.strptime(input_list[0], "%Y/%m/%d"),
@@ -41,21 +41,28 @@ def csv_helper(file_name: str) -> Iterator[Stock]:
             yield Stock.from_list(row)
 
 
-@op
-def get_s3_data():
-    pass
+@op(config_schema={"s3_key": String})
+def get_s3_data(context) -> List[Stock]:
+    s3_key = context.op_config["s3_key"]
+    return list(csv_helper(s3_key))
 
 
 @op
-def process_data():
-    pass
+def process_data(context, stocks: List[Stock]) -> Aggregation:
+    best_stock = None
+    high_value = -1 * 10 ** 6
+    for stock in stocks:
+        if stock.high > high_value:
+            high_value = stock.high
+            best_stock = Aggregation(date=stock.date, high=stock.high)
+    return best_stock
 
 
 @op
-def put_redis_data():
+def put_redis_data(context, aggregation: Aggregation):
     pass
 
 
 @job
 def week_1_pipeline():
-    pass
+    put_redis_data(process_data(get_s3_data()))
