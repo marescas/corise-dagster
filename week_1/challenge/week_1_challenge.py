@@ -60,16 +60,16 @@ def get_s3_data(context) -> List[Stock]:
     s3_key = context.op_config["s3_key"]
     stock_list = list(csv_helper(s3_key))
     if len(stock_list) == 0:
-        return Output(stock_list, "empty_stocks")
+        yield Output(None, "empty_stocks")
     else:
-        return Output(stock_list, "stocks")
+        yield Output(stock_list, "stocks")
 
 
 @op(config_schema={"nlargest": Int}, out=DynamicOut())
 def process_data(context, stocks: List[Stock]) -> List[Aggregation]:
     nlargest_int = context.op_config["nlargest"]
-    for stock in nlargest(nlargest_int, stocks):
-        yield DynamicOutput(Aggregation(date=stock.date, high=stock.high), mapping_key=str(stock.date))
+    for stock in sorted(stocks, key=lambda t: t.high, reverse=True)[:nlargest_int]:
+        yield DynamicOutput(Aggregation(date=stock.date, high=stock.high), mapping_key=str(int(stock.date.timestamp())))
 
 
 @op
@@ -81,7 +81,7 @@ def put_redis_data(context, aggregation: Aggregation):
     ins={"empty_stocks": In(dagster_type=Any)},
     description="Notifiy if stock list is empty",
 )
-def empty_stock_notify(context, empty_stocks) -> Nothing:
+def empty_stock_notify(context, empty_stocks: List[Stock]) -> Nothing:
     context.log.info("No stocks returned")
 
 
@@ -89,5 +89,5 @@ def empty_stock_notify(context, empty_stocks) -> Nothing:
 def week_1_challenge():
     stocks, empty_stocks = get_s3_data()
     empty_stock_notify(empty_stocks)
-    data_processed = stocks.map(process_data)
-    put_redis_data(data_processed.collect())
+    data_processed = process_data(stocks)
+    data_processed.map(put_redis_data)
