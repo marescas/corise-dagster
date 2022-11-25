@@ -5,29 +5,36 @@ from workspaces.resources import mock_s3_resource, redis_resource, s3_resource
 from workspaces.types import Aggregation, Stock
 
 
-@op
-def get_s3_data():
-    pass
+@op(config_schema={"s3_key": String}, required_resource_keys={"s3"}, tags={"kind": "s3"})
+def get_s3_data(context) -> List[Stock]:
+    s3_key = context.op_config["s3_key"]
+    return [Stock.from_list(stock_list) for stock_list in context.resources.s3.get_data(s3_key)]
 
 
 @op
-def process_data():
-    pass
+def process_data(context, stocks: List[Stock]) -> Aggregation:
+    best_stock = None
+    high_value = -1 * 10 ** 6
+    for stock in stocks:
+        if stock.high > high_value:
+            high_value = stock.high
+            best_stock = Aggregation(date=stock.date, high=stock.high)
+    return best_stock
 
 
-@op
-def put_redis_data():
-    pass
+@op(required_resource_keys={"redis"}, tags={"kind": "redis"})
+def put_redis_data(context, aggregation: Aggregation):
+    context.resources.redis.put_data(name=str(aggregation.date), value=str(aggregation.high))
 
 
-@op
-def put_s3_data():
-    pass
+@op(required_resource_keys={"s3"}, tags={"kind": "s3"})
+def put_s3_data(context, aggregation: Aggregation):
+    context.resources.s3.put_data(key_name=str(aggregation.date), data=aggregation)
 
 
 @graph
 def week_2_pipeline():
-    pass
+    put_redis_data(process_data(get_s3_data()))
 
 
 local = {
@@ -56,8 +63,12 @@ docker = {
 
 week_2_pipeline_local = week_2_pipeline.to_job(
     name="week_2_pipeline_local",
+    config=local,
+    resource_defs={"s3": mock_s3_resource, "redis": ResourceDefinition.mock_resource()}
 )
 
 week_2_pipeline_docker = week_2_pipeline.to_job(
     name="week_2_pipeline_docker",
+    config=docker,
+    resource_defs={"s3": s3_resource, "redis": redis_resource}
 )
