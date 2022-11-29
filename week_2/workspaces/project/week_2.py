@@ -34,7 +34,9 @@ def put_s3_data(context, aggregation: Aggregation):
 
 @graph
 def week_2_pipeline():
-    put_redis_data(process_data(get_s3_data()))
+    result = process_data(get_s3_data())
+    put_redis_data(result)
+    put_s3_data(result)
 
 
 local = {
